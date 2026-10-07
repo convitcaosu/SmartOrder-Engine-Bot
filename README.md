@@ -20,6 +20,8 @@ Qua quá trình test, bot đang gặp phải một số lỗi logic cần đư�
    - Khi khung lớn H1, H4 đang là xu hướng Giảm (Bear).
    - Nhưng khung nhỏ M15 lại xuất hiện tín hiệu Tăng (Bull).
    - Khi giá pullback/retest quá nhiều lần, bot dễ bị nhiễu tín hiệu và vào quá nhiều lệnh ngược với xu hướng chính.
+## Kết quả Backtest
+<img width="945" height="257" alt="image" src="https://github.com/user-attachments/assets/43d02ec9-f322-4e86-a0bd-d90caafa161f" />
 
 ## Hướng phát triển
 - Tối ưu lại logic dời Stoploss (chờ giá đi xa hơn, ví dụ 1.5R hoặc 2R mới dời BE).
