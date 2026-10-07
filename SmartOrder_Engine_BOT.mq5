@@ -53,6 +53,17 @@ CTrade trade;
 //==================================================================
 // INPUTS
 //==================================================================
+input group "=== Risk / sizing ==="
+input bool          InpUseFixedLot      = false;        // Use fixed lot (else risk-%). FALSE = risk-% so $-risk is consistent
+input double        InpFixedLot         = 0.01;         // Lot per leg when fixed
+input double        InpRiskPerOrderPct  = 1.0;          // % equity risked per signal (both legs) when not fixed
+input double        InpMaxLot           = 2.0;          // Hard lot cap per leg
+input bool          InpAllowMinLot      = true;         // Fall back to broker min lot on small accounts
+input int           InpMaxOpenPositions = 2;            // Max EA positions total (avoid correlated churn)
+input int           InpMaxSpreadPoints  = 400;          // Reject entries above this spread (points)
+input int           InpMaxSlippagePoints= 50;           // Execution slippage (points)
+input double        InpDailyLossStopPct = 4.0;          // Halt new entries after this daily drawdown % (0=off)
+
 input group "=== Mode / identity ==="
 input long          InpMagic             = 300700;      // Magic number
 input bool          InpAutoTrade         = true;        // Allow live order execution (attach to a chart to manage)
@@ -133,6 +144,7 @@ input bool          InpRequireFreshTrigger = true;      // Require a fresh M1/M5
 input ENUM_TIMEFRAMES InpTriggerMinTF   = PERIOD_M1;    // Fresh trigger must be on this TF or higher (M1 = more/faster; M5 = cleaner)
 input int           InpTransitionPenalty   = 10;        // TRANSITION regime penalty unless fresh CHOCH in dir (0=off)
 input int           InpLossCooldownMin     = 5;         // Block same-dir re-entry this many minutes after a loss (0=off)
+input int           InpWinCooldownMin      = 60;        // NEW: Block same-dir re-entry after manual close or TP profit (minutes)
 
 input group "=== Multi-frame confluence (NEW r6) ==="
 input bool          InpUseMTFConfluence  = true;        // Reward when several timeframes agree with the direction
@@ -372,6 +384,8 @@ int      g_logHandle=INVALID_HANDLE;
 string   g_lastDecision="init";
 datetime g_lastLossBuy=0;    // time of last closed loss in BUY dir (cooldown)
 datetime g_lastLossSell=0;   // time of last closed loss in SELL dir (cooldown)
+datetime g_lastWinBuy=0;     // time of last closed win/manual in BUY dir
+datetime g_lastWinSell=0;    // time of last closed win/manual in SELL dir
 int      g_zoneObjCount=0;
 double   g_spreadEMA=0.0;     // smoothed live spread for the news-spike guard
 bool     g_isManager=true;    // false if another live instance owns the manager lock
@@ -1238,10 +1252,16 @@ void SyncVPos()
       if(!PositionSelectByTicket(g_vpos[i].ticket))
         {
          // record a loss for the same-direction cooldown guard
-         if(ClosedNetProfit(g_vpos[i].ticket)<0.0)
+         double netP = ClosedNetProfit(g_vpos[i].ticket);
+         if(netP<0.0)
            {
             if(g_vpos[i].dir>0) g_lastLossBuy=TimeCurrent();
             else g_lastLossSell=TimeCurrent();
+           }
+         else if(netP>0.0)
+           {
+            if(g_vpos[i].dir>0) g_lastWinBuy=TimeCurrent();
+            else g_lastWinSell=TimeCurrent();
            }
          // Position closed by broker SL/TP or externally: bank TP1 for its runner pair
          if(!g_vpos[i].isRunner && g_vpos[i].group>0)
@@ -1880,7 +1900,20 @@ void SyncBrokerSLTP()
       ulong t=g_vpos[i].ticket;
       if(!PositionSelectByTicket(t)) continue;
       double bsl=PositionGetDouble(POSITION_SL);
-      if(MathAbs(bsl-g_vpos[i].virtualSL)>g_point)
+      bool isManualBetter = false;
+      if(bsl>0.0)
+        {
+         if(g_vpos[i].dir>0 && bsl > g_vpos[i].virtualSL + g_point) isManualBetter = true;
+         if(g_vpos[i].dir<0 && bsl < g_vpos[i].virtualSL - g_point) isManualBetter = true;
+        }
+      
+      if(isManualBetter)
+        {
+         // Accept manual SL, do not modify broker backwards
+         g_vpos[i].virtualSL = bsl;
+         SaveVPos(i);
+        }
+      else if(MathAbs(bsl-g_vpos[i].virtualSL)>g_point)
         { trade.SetExpertMagicNumber(InpMagic); trade.PositionModify(t,g_vpos[i].virtualSL,g_vpos[i].virtualTP); }
      }
   }
@@ -1998,6 +2031,14 @@ void TryEntry()
          why=StringFormat("cooldown %dm after loss",InpLossCooldownMin);
      }
 
+   // Win/Manual cooldown: do not re-enter right after taking profit
+   if(why==""&&InpWinCooldownMin>0)
+     {
+      datetime lastW=(dir>0?g_lastWinBuy:g_lastWinSell);
+      if(lastW>0&&(TimeCurrent()-lastW)<InpWinCooldownMin*60)
+         why=StringFormat("cooldown %dm after win/manual close",InpWinCooldownMin);
+     }
+
    if(why!=""){ LogDecision(dir,0,"BLOCKED:"+why); return; }
 
    double sl=StructuralSL(dir);
@@ -2042,19 +2083,36 @@ void SetRow(int row,string label,string value,color clr)
   {
    string n1=g_prefix+"DB_L"+IntegerToString(row);
    string n2=g_prefix+"DB_V"+IntegerToString(row);
-   if(ObjectFind(0,n1)<0){ ObjectCreate(0,n1,OBJ_LABEL,0,0,0); ObjectSetInteger(0,n1,OBJPROP_CORNER,CORNER_LEFT_UPPER);
-      ObjectSetInteger(0,n1,OBJPROP_XDISTANCE,12);ObjectSetInteger(0,n1,OBJPROP_YDISTANCE,24+row*18);
-      ObjectSetInteger(0,n1,OBJPROP_FONTSIZE,9);ObjectSetString(0,n1,OBJPROP_FONT,"Consolas"); }
-   if(ObjectFind(0,n2)<0){ ObjectCreate(0,n2,OBJ_LABEL,0,0,0); ObjectSetInteger(0,n2,OBJPROP_CORNER,CORNER_LEFT_UPPER);
-      ObjectSetInteger(0,n2,OBJPROP_XDISTANCE,190);ObjectSetInteger(0,n2,OBJPROP_YDISTANCE,24+row*18);
-      ObjectSetInteger(0,n2,OBJPROP_FONTSIZE,9);ObjectSetString(0,n2,OBJPROP_FONT,"Consolas"); }
-   ObjectSetString(0,n1,OBJPROP_TEXT,label);ObjectSetInteger(0,n1,OBJPROP_COLOR,clrSilver);
+   if(ObjectFind(0,n1)<0){ ObjectCreate(0,n1,OBJ_LABEL,0,0,0); ObjectSetInteger(0,n1,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+      ObjectSetInteger(0,n1,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
+      ObjectSetInteger(0,n1,OBJPROP_XDISTANCE,220);ObjectSetInteger(0,n1,OBJPROP_YDISTANCE,24+row*18);
+      ObjectSetInteger(0,n1,OBJPROP_FONTSIZE,9);ObjectSetString(0,n1,OBJPROP_FONT,"Consolas"); ObjectSetInteger(0,n1,OBJPROP_ZORDER,10); }
+   if(ObjectFind(0,n2)<0){ ObjectCreate(0,n2,OBJ_LABEL,0,0,0); ObjectSetInteger(0,n2,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+      ObjectSetInteger(0,n2,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
+      ObjectSetInteger(0,n2,OBJPROP_XDISTANCE,120);ObjectSetInteger(0,n2,OBJPROP_YDISTANCE,24+row*18);
+      ObjectSetInteger(0,n2,OBJPROP_FONTSIZE,9);ObjectSetString(0,n2,OBJPROP_FONT,"Consolas"); ObjectSetInteger(0,n2,OBJPROP_ZORDER,10); }
+   ObjectSetString(0,n1,OBJPROP_TEXT,label);ObjectSetInteger(0,n1,OBJPROP_COLOR,clrWhite);
    ObjectSetString(0,n2,OBJPROP_TEXT,value);ObjectSetInteger(0,n2,OBJPROP_COLOR,clr);
   }
 
 void Dashboard()
   {
    if(!InpShowDashboard) return;
+   
+   string bgName=g_prefix+"DB_BG";
+   if(ObjectFind(0,bgName)<0)
+     {
+      ObjectCreate(0,bgName,OBJ_RECTANGLE_LABEL,0,0,0);
+      ObjectSetInteger(0,bgName,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+      ObjectSetInteger(0,bgName,OBJPROP_BGCOLOR,clrBlack);
+      ObjectSetInteger(0,bgName,OBJPROP_BORDER_COLOR,clrBlack);
+      ObjectSetInteger(0,bgName,OBJPROP_BACK,false); 
+      ObjectSetInteger(0,bgName,OBJPROP_ZORDER,0); 
+     }
+   ObjectSetInteger(0,bgName,OBJPROP_XDISTANCE,10);
+   ObjectSetInteger(0,bgName,OBJPROP_YDISTANCE,15);
+   ObjectSetInteger(0,bgName,OBJPROP_XSIZE,225); 
+
    int r=0;
    SetRow(r++,"BOT v3 r14","XAUUSD adaptive",clrGold);
    SetRow(r++,"Regime",RegimeStr(g_snap.regime)+" "+BiasStr(g_snap.regimeDir),
@@ -2062,16 +2120,21 @@ void Dashboard()
    SetRow(r++,"ADX",DoubleToString(g_snap.adx,1),clrWhite);
    SetRow(r++,"H4 / H1",BiasStr(g_snap.htfBiasMajor)+" / "+BiasStr(g_snap.htfBias),clrWhite);
    SetRow(r++,"M30 struct",BiasStr(g_snap.structBias),clrWhite);
-   SetRow(r++,"BUY score",IntegerToString(g_snap.buyScore),g_snap.buyScore>=InpScoreEntry?clrLime:clrSilver);
-   SetRow(r++,"SELL score",IntegerToString(g_snap.sellScore),g_snap.sellScore>=InpScoreEntry?clrTomato:clrSilver);
-   SetRow(r++,"Entry thr",IntegerToString(InpScoreEntry),clrSilver);
-   SetRow(r++,"Events",IntegerToString(ArraySize(g_events))+"  Zones "+IntegerToString(ArraySize(g_zones)),clrSilver);
-   SetRow(r++,"Positions",IntegerToString(CountEA())+"  float $"+DoubleToString(BasketFloating(),2),clrWhite);
-   SetRow(r++,"Spread",DoubleToString(g_snap.spreadPoints,0),SpreadOK()?clrSilver:clrTomato);
+   SetRow(r++,"BUY score",IntegerToString(g_snap.buyScore),g_snap.buyScore>=InpScoreEntry?clrLime:clrWhite);
+   SetRow(r++,"SELL score",IntegerToString(g_snap.sellScore),g_snap.sellScore>=InpScoreEntry?clrTomato:clrWhite);
+   SetRow(r++,"Entry thr",IntegerToString(InpScoreEntry),clrWhite);
+   SetRow(r++,"Events",IntegerToString(ArraySize(g_events))+"  Zones "+IntegerToString(ArraySize(g_zones)),clrWhite);
+   SetRow(r++,"Positions",IntegerToString(CountEA()),clrWhite);
+   SetRow(r++,"Spread",DoubleToString(g_snap.spreadPoints,0),SpreadOK()?clrWhite:clrTomato);
    string runnerState="-";
    for(int i=0;i<ArraySize(g_vpos);i++) if(g_vpos[i].isRunner){ runnerState=StringFormat("st%d %s",g_vpos[i].stage,g_vpos[i].dir>0?"BUY":"SELL"); break; }
    SetRow(r++,"Runner",runnerState,clrAqua);
-   SetRow(r++,"Last",g_lastDecision,clrGray);
+   
+   double dailyPnL = AccountInfoDouble(ACCOUNT_EQUITY) - g_dayEquityStart;
+   SetRow(r++,"Daily PnL", "$"+DoubleToString(dailyPnL,2), dailyPnL>=0?clrLime:clrTomato);
+   
+   ObjectSetInteger(0,bgName,OBJPROP_YSIZE,r*18 + 15);
+   
    ChartRedraw();
   }
 
