@@ -2068,17 +2068,46 @@ void LogDecision(int dir,int fired,string note)
 //==================================================================
 // DASHBOARD
 //==================================================================
+double CurrencyMultiplier()
+  {
+   string curr = AccountInfoString(ACCOUNT_CURRENCY);
+   StringToUpper(curr);
+   if(StringFind(curr, "USC") >= 0 || StringFind(curr, "CENT") >= 0) return 0.01;
+   return 1.0;
+  }
+
+double BotPnL(datetime fromTime)
+  {
+   double pnl = BasketFloating();
+   if(HistorySelect(fromTime, TimeCurrent()))
+     {
+      int deals = HistoryDealsTotal();
+      for(int i=0; i<deals; i++)
+        {
+         ulong deal = HistoryDealGetTicket(i);
+         if(deal > 0)
+           {
+            if(HistoryDealGetString(deal, DEAL_SYMBOL) == _Symbol && HistoryDealGetInteger(deal, DEAL_MAGIC) == InpMagic)
+              {
+               pnl += HistoryDealGetDouble(deal, DEAL_PROFIT) + HistoryDealGetDouble(deal, DEAL_SWAP) + HistoryDealGetDouble(deal, DEAL_COMMISSION);
+              }
+           }
+        }
+     }
+   return pnl;
+  }
+
 void SetRow(int row,string label,string value,color clr)
   {
    string n1=g_prefix+"DB_L"+IntegerToString(row);
    string n2=g_prefix+"DB_V"+IntegerToString(row);
    if(ObjectFind(0,n1)<0){ ObjectCreate(0,n1,OBJ_LABEL,0,0,0); ObjectSetInteger(0,n1,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
       ObjectSetInteger(0,n1,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
-      ObjectSetInteger(0,n1,OBJPROP_XDISTANCE,220);ObjectSetInteger(0,n1,OBJPROP_YDISTANCE,24+row*18);
+      ObjectSetInteger(0,n1,OBJPROP_XDISTANCE,240);ObjectSetInteger(0,n1,OBJPROP_YDISTANCE,24+row*18);
       ObjectSetInteger(0,n1,OBJPROP_FONTSIZE,9);ObjectSetString(0,n1,OBJPROP_FONT,"Consolas"); ObjectSetInteger(0,n1,OBJPROP_ZORDER,10); }
    if(ObjectFind(0,n2)<0){ ObjectCreate(0,n2,OBJ_LABEL,0,0,0); ObjectSetInteger(0,n2,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
       ObjectSetInteger(0,n2,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
-      ObjectSetInteger(0,n2,OBJPROP_XDISTANCE,120);ObjectSetInteger(0,n2,OBJPROP_YDISTANCE,24+row*18);
+      ObjectSetInteger(0,n2,OBJPROP_XDISTANCE,130);ObjectSetInteger(0,n2,OBJPROP_YDISTANCE,24+row*18);
       ObjectSetInteger(0,n2,OBJPROP_FONTSIZE,9);ObjectSetString(0,n2,OBJPROP_FONT,"Consolas"); ObjectSetInteger(0,n2,OBJPROP_ZORDER,10); }
    ObjectSetString(0,n1,OBJPROP_TEXT,label);ObjectSetInteger(0,n1,OBJPROP_COLOR,clrWhite);
    ObjectSetString(0,n2,OBJPROP_TEXT,value);ObjectSetInteger(0,n2,OBJPROP_COLOR,clr);
@@ -2094,13 +2123,13 @@ void Dashboard()
       ObjectCreate(0,bgName,OBJ_RECTANGLE_LABEL,0,0,0);
       ObjectSetInteger(0,bgName,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
       ObjectSetInteger(0,bgName,OBJPROP_BGCOLOR,clrBlack);
-      ObjectSetInteger(0,bgName,OBJPROP_BORDER_COLOR,clrBlack);
+      ObjectSetInteger(0,bgName,OBJPROP_COLOR,clrBlack); // Viền đen để tàng hình
       ObjectSetInteger(0,bgName,OBJPROP_BACK,false); 
       ObjectSetInteger(0,bgName,OBJPROP_ZORDER,0); 
      }
-   ObjectSetInteger(0,bgName,OBJPROP_XDISTANCE,10);
+   ObjectSetInteger(0,bgName,OBJPROP_XDISTANCE,20);
    ObjectSetInteger(0,bgName,OBJPROP_YDISTANCE,15);
-   ObjectSetInteger(0,bgName,OBJPROP_XSIZE,225); 
+   ObjectSetInteger(0,bgName,OBJPROP_XSIZE,230); 
 
    int r=0;
    SetRow(r++,"BOT v3 r14","XAUUSD adaptive",clrGold);
@@ -2119,8 +2148,15 @@ void Dashboard()
    for(int i=0;i<ArraySize(g_vpos);i++) if(g_vpos[i].isRunner){ runnerState=StringFormat("st%d %s",g_vpos[i].stage,g_vpos[i].dir>0?"BUY":"SELL"); break; }
    SetRow(r++,"Runner",runnerState,clrAqua);
    
-   double dailyPnL = AccountInfoDouble(ACCOUNT_EQUITY) - g_dayEquityStart;
+   double mult = CurrencyMultiplier();
+   double dailyPnL = BotPnL(g_dayStart) * mult;
+   
+   MqlDateTime dt; TimeToStruct(TimeCurrent(), dt);
+   dt.day = 1; dt.hour = 0; dt.min = 0; dt.sec = 0;
+   double monthlyPnL = BotPnL(StructToTime(dt)) * mult;
+   
    SetRow(r++,"Daily PnL", "$"+DoubleToString(dailyPnL,2), dailyPnL>=0?clrLime:clrTomato);
+   SetRow(r++,"Monthly PnL", "$"+DoubleToString(monthlyPnL,2), monthlyPnL>=0?clrLime:clrTomato);
    
    ObjectSetInteger(0,bgName,OBJPROP_YSIZE,r*18 + 15);
    
