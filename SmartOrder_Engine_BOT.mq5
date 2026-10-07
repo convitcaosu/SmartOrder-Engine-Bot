@@ -173,17 +173,6 @@ input bool          InpDrawZones         = true;        // Draw active FVG/OB zo
 input color         InpColorDemand       = C'120,200,140';
 input color         InpColorSupply       = C'220,130,130';
 
-input group "=== Risk / sizing ==="
-input bool          InpUseFixedLot      = false;        // Use fixed lot (else risk-%). FALSE = risk-% so $-risk is consistent
-input double        InpFixedLot         = 0.01;         // Lot per leg when fixed
-input double        InpRiskPerOrderPct  = 1.0;          // % equity risked per signal (both legs) when not fixed
-input double        InpMaxLot           = 2.0;          // Hard lot cap per leg
-input bool          InpAllowMinLot      = true;         // Fall back to broker min lot on small accounts
-input int           InpMaxOpenPositions = 2;            // Max EA positions total (avoid correlated churn)
-input int           InpMaxSpreadPoints  = 400;          // Reject entries above this spread (points)
-input int           InpMaxSlippagePoints= 50;           // Execution slippage (points)
-input double        InpDailyLossStopPct = 4.0;          // Halt new entries after this daily drawdown % (0=off)
-
 input group "=== SL / legs ==="
 input double        InpGoldPipSize      = 0.01;         // One XAU pip in price units
 input bool          InpUseSmartSL       = true;         // Smart invalidation: HTF OB/FVG + swing + liquidity sweep
