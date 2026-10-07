@@ -2122,14 +2122,15 @@ void Dashboard()
      {
       ObjectCreate(0,bgName,OBJ_RECTANGLE_LABEL,0,0,0);
       ObjectSetInteger(0,bgName,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+      ObjectSetInteger(0,bgName,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
       ObjectSetInteger(0,bgName,OBJPROP_BGCOLOR,clrBlack);
       ObjectSetInteger(0,bgName,OBJPROP_COLOR,clrBlack); // Viền đen để tàng hình
       ObjectSetInteger(0,bgName,OBJPROP_BACK,false); 
       ObjectSetInteger(0,bgName,OBJPROP_ZORDER,0); 
      }
-   ObjectSetInteger(0,bgName,OBJPROP_XDISTANCE,20);
+   ObjectSetInteger(0,bgName,OBJPROP_XDISTANCE,250);
    ObjectSetInteger(0,bgName,OBJPROP_YDISTANCE,15);
-   ObjectSetInteger(0,bgName,OBJPROP_XSIZE,230); 
+   ObjectSetInteger(0,bgName,OBJPROP_XSIZE,240); 
 
    int r=0;
    SetRow(r++,"BOT v3 r14","XAUUSD adaptive",clrGold);
