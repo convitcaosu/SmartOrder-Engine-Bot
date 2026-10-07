@@ -167,6 +167,7 @@ input double        InpFixedLot         = 0.01;         // Lot per leg when fixe
 input double        InpRiskPerOrderPct  = 1.0;          // % equity risked per signal (both legs) when not fixed
 input double        InpMaxLot           = 2.0;          // Hard lot cap per leg
 input bool          InpAllowMinLot      = true;         // Fall back to broker min lot on small accounts
+input double        InpMaxMinLotRiskPct = 100.0;        // Max % risk allowed when using min lot (100 = always enter)
 input int           InpMaxOpenPositions = 2;            // Max EA positions total (avoid correlated churn)
 input int           InpMaxSpreadPoints  = 400;          // Reject entries above this spread (points)
 input int           InpMaxSlippagePoints= 50;           // Execution slippage (points)
@@ -1301,7 +1302,7 @@ double PlanLotForRisk(double distance,double riskFraction,double &why_ok)
    double minLot=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
    if(raw<minLot)
      {
-      if(InpAllowMinLot && TickLossPerLot(distance)*minLot<=AccountInfoDouble(ACCOUNT_EQUITY)*0.02) raw=minLot;
+      if(InpAllowMinLot && TickLossPerLot(distance)*minLot<=AccountInfoDouble(ACCOUNT_EQUITY)*(InpMaxMinLotRiskPct/100.0)) raw=minLot;
       else { why_ok=0.0; return 0.0; }
      }
    return NormalizeLot(raw);
