@@ -27,7 +27,6 @@ Qua quá trình test, bot đang gặp phải một số lỗi logic cần đư�
 <img width="945" height="257" alt="image" src="https://github.com/user-attachments/assets/43d02ec9-f322-4e86-a0bd-d90caafa161f" />
 
 ## Kết quả Backtest
-<img width="945" height="257" alt="image" src="https://github.com/user-attachments/assets/43d02ec9-f322-4e86-a0bd-d90caafa161f" />
 <img width="945" height="318" alt="image" src="https://github.com/user-attachments/assets/48ae9f54-30a9-4c55-af05-2611f071b468" />
 <img width="945" height="315" alt="image" src="https://github.com/user-attachments/assets/79d853f9-8dc3-4eff-8bda-20c184ccb805" />
 <img width="945" height="315" alt="image" src="https://github.com/user-attachments/assets/902fec1f-0b7a-4e99-abc2-f8999cffc467" />
