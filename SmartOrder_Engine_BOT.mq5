@@ -55,6 +55,16 @@ CTrade trade;
 //==================================================================
 input group "=== Mode / identity ==="
 input long          InpMagic             = 300700;      // Magic number
+
+enum ENUM_MIN_LOT_GUARD
+  {
+   GUARD_NONE = 0,    // NONE: Always allow min lot (Risky)
+   GUARD_SAFE = 1     // SAFE: Limit min lot risk to InpMaxMinLotRiskPct
+  };
+input ENUM_MIN_LOT_GUARD InpMinLotGuard = GUARD_NONE; // Min-Lot Safety Guard
+input double             InpMaxMinLotRiskPct = 2.0;   //   Max % risk allowed if SAFE
+
+input bool          InpSkipWideSL        = false;       // [4] FALSE: Clamp SL to max cap. TRUE: Skip trade if SL > cap.
 input bool          InpAutoTrade         = true;        // Allow live order execution (attach to a chart to manage)
 
 enum ENUM_POSITIVE_DCA_MODE
@@ -70,7 +80,7 @@ enum ENUM_ENTRY_EXIT_MODE
    ENTRY_TP_ONLY     = 1,  // TP ONLY: open TP1 only
    ENTRY_RUNNER_ONLY = 2   // RUNNER ONLY: open runner only
   };
-input ENUM_ENTRY_EXIT_MODE InpEntryExitMode = ENTRY_BOTH; // >>> CHOOSE: BOTH / TP_ONLY / RUNNER_ONLY
+input ENUM_ENTRY_EXIT_MODE InpEntryExitMode = ENTRY_RUNNER_ONLY; // >>> CHOOSE: BOTH / TP_ONLY / RUNNER_ONLY
 input int           InpDCA_MaxAdds            = 2;          // Maximum positive pyramid adds per root runner
 input double        InpDCA_FirstAtR           = 4.0;        // First add after root runner reaches this R
 input double        InpDCA_StepR              = 3.0;        // Additional R required for each next add
@@ -81,6 +91,76 @@ input bool          InpManagePositions   = true;        // This instance manages
 input bool          InpShowDashboard     = true;        // Show status dashboard
 input bool          InpVerboseLog        = true;        // Print every scored decision (audit trail)
 input bool          InpWriteCSV          = false;       // Also append decisions to MQL5/Files/bot_v3_log.csv
+
+input group "=== Risk / sizing ==="
+input bool          InpUseFixedLot      = false;        // Use fixed lot (else risk-%). FALSE = risk-% so $-risk is consistent
+input double        InpFixedLot         = 0.01;         // Lot per leg when fixed
+input double        InpRiskPerOrderPct  = 1.0;          // % equity risked per signal (both legs) when not fixed
+input double        InpMaxLot           = 2.0;          // Hard lot cap per leg
+input bool          InpAllowMinLot      = true;         // Fall back to broker min lot on small accounts
+input int           InpMaxOpenPositions = 2;            // Max EA positions total (avoid correlated churn)
+input int           InpMaxSpreadPoints  = 400;          // Reject entries above this spread (points)
+input int           InpMaxSlippagePoints= 50;           // Execution slippage (points)
+input double        InpDailyLossStopPct = 4.0;          // Halt new entries after this daily drawdown % (0=off)
+
+input group "=== SL / legs ==="
+input double        InpGoldPipSize      = 0.01;         // One XAU pip in price units
+input bool          InpUseSmartSL       = true;         // Smart invalidation: HTF OB/FVG + swing + liquidity sweep
+input double        InpSmartSL_ZoneATR  = 0.60;         // Max distance from current price for a zone to be considered a reaction/retest
+input double        InpSmartSL_BufferATR= 0.20;         // Extra breathing room beyond the invalidation extreme
+input double        InpSmartSL_MinATR   = 0.65;         // Minimum stop distance when Smart SL is used
+input double        InpSmartSL_MaxATR   = 4.50;         // Maximum stop distance before skip/clamp
+input bool          InpSmartSL_UseSweep = true;         // Include recent HTF liquidity sweep as invalidation candidate
+input bool          InpSmartSL_UseFVG   = false;        // Use FVG edge as a secondary invalidation candidate
+input double        InpSL_ATR_Buffer    = 0.25;         // Fallback SL buffer beyond structure extreme (ATR mult)
+input double        InpMinSLPips        = 400.0;        // Minimum structural stop (pips) (400 pips = $4)
+input double        InpMaxSLPips        = 600.0;        // Maximum structural stop (pips) (600 pips = $6 at 0.01 lot)
+input double        InpTP1_RR           = 1.25;         // TP target in R when TP leg is enabled
+input bool          InpUseBrokerSLTP    = true;         // Send real SL/TP to broker
+input bool          InpRetryRunner      = true;          // Retry runner if broker rejects the first request
+input int           InpRunnerRetryMs    = 150;           // Delay between runner retries (ms)
+input bool          InpRequireBothLegs  = true;          // BOTH mode: if either leg fails, close the other leg
+input double        InpBothRiskFraction = 0.50;          // Risk fraction per leg in BOTH mode (0.50 = total risk ~= configured risk)
+input ENUM_TIMEFRAMES InpSL_SwingTF     = PERIOD_M5;    // TF for the structural SL swing (M1 is too noisy/easily swept)
+
+input group "=== Profit protection state machine (R-based or Fixed Points) ==="
+input bool          InpUseFixedPointsProtect = true;    // Use fixed points (e.g. 4.0 = $4 on 0.01 lot) instead of R-based
+input double        InpProtectAtPoints  = 6.0;          // Protect after this many points (6.0 = $6 on 0.01 lot)
+input double        InpProtectLockPoints= 0.5;          // Lock this many points (0.5 = $0.50 on 0.01 lot)
+input double        InpProtectAtR       = 2.00;         // Do NOT tighten before runner reaches this R (if not using Fixed Points)
+input double        InpProtectLockR     = 0.25;         // At ProtectAtR, lock only this R (room to breathe)
+input double        InpLockAtR          = 3.00;         // Stronger lock after this R
+input double        InpLockProfitR      = 0.75;         // Lock this much R above/below entry
+input double        InpTrailArmR        = 3.00;         // Structure trail starts here
+input double        InpRunnerArmR       = 4.00;         // Breakout runner mode starts here
+input bool          InpUseStructureTrail= true;         // Trail SL under HH/HL (BUY) or over LH/LL (SELL)
+input double        InpTrailATRBuffer   = 1.50;         // Structure trail buffer (ATR mult)
+input double        InpTrailMinATR      = 0.75;         // Minimum live price-to-SL distance while trailing
+input ENUM_TIMEFRAMES InpTrailTF        = PERIOD_H4;    // Timeframe for structure trail HH/HL (BUY) or LH/LL (SELL)
+input int           InpGiveBackPct      = 0;           // Max % of peak floating profit to give back before closing (0=off)
+input double        InpGiveBackMinUSD   = 999999.0;          // Min peak floating $ before give-back rule applies
+input bool          InpHoldLonger       = true;         // Let winners run: trend-aware give-back + wider trail while aligned TREND/BREAKOUT
+input int           InpGiveBackPctTrend = 0;           // Give-back % allowed while runner is in an aligned TREND/BREAKOUT (looser = hold longer)
+input double        InpTrailBufferTrend = 0.90;
+
+input bool          InpPeakTrailOn      = false;      // Trail SL behind the peak price (secures profits as price advances)
+input double        InpPeakTrailATR     = 1.50;       // SL distance behind peak extreme, in ATR
+
+input group "=== Exit engine (spec 16-18) ==="
+input int           InpExitWarnScore    = 999;           // Exit score against runner => tighten SL (WARNING)
+input int           InpExitCloseScore   = 999;           // Exit score against runner => close it (REVERSAL)
+input bool          InpExitOnlyBeforeTrail = true;      // Exit-score close only while stage<3 (trail decides after)
+input bool          InpExitOnHTFReversal= false;         // Close runner on confirmed HTF structure reversal
+
+input group "=== Session / news / logging / safety ==="
+input bool          InpUseSessionFilter = false;        // Only enter inside the session window below (server time)
+input int           InpSessionStartHour = 7;            // Session start hour (server, inclusive)
+input int           InpSessionEndHour   = 20;           // Session end hour (server, exclusive)
+input bool          InpBlockNewsSpike   = true;         // Block new entries on an abnormal M1 volatility / spread spike
+input double        InpNewsSpikeATR     = 3.0;          // Last closed M1 bar range > this*ATR => treat as news spike
+input double        InpNewsSpreadMult   = 2.0;          // Live spread > this*smoothed-average => treat as news spike (0=off)
+input bool          InpLogOnlyMode      = false;        // Score+log every decision but NEVER place orders (backtest data collection)
+input bool          InpSingleManagerLock= true;         // Prevent a 2nd chart (same magic+symbol) from managing the same tickets
 
 input group "=== Timeframes ==="
 input ENUM_TIMEFRAMES InpTFContextMajor= PERIOD_H4;     // Major context
@@ -133,7 +213,7 @@ input bool          InpRequireFreshTrigger = true;      // Require a fresh M1/M5
 input ENUM_TIMEFRAMES InpTriggerMinTF   = PERIOD_M1;    // Fresh trigger must be on this TF or higher (M1 = more/faster; M5 = cleaner)
 input int           InpTransitionPenalty   = 10;        // TRANSITION regime penalty unless fresh CHOCH in dir (0=off)
 input int           InpLossCooldownMin     = 5;         // Block same-dir re-entry this many minutes after a loss (0=off)
-
+input int           InpWinCooldownMin      = 60;        // NEW: Block same-dir re-entry after manual close or TP profit (minutes)
 input group "=== Multi-frame confluence (NEW r6) ==="
 input bool          InpUseMTFConfluence  = true;        // Reward when several timeframes agree with the direction
 input int           InpMTFMinFrames      = 3;           // Frames agreeing before the bonus starts (H4,H1,M30,M15-EMA,M5-trigger)
@@ -161,71 +241,6 @@ input bool          InpDrawZones         = true;        // Draw active FVG/OB zo
 input color         InpColorDemand       = C'120,200,140';
 input color         InpColorSupply       = C'220,130,130';
 
-input group "=== Risk / sizing ==="
-input bool          InpUseFixedLot      = false;        // Use fixed lot (else risk-%). FALSE = risk-% so $-risk is consistent
-input double        InpFixedLot         = 0.01;         // Lot per leg when fixed
-input double        InpRiskPerOrderPct  = 1.0;          // % equity risked per signal (both legs) when not fixed
-input double        InpMaxLot           = 2.0;          // Hard lot cap per leg
-input bool          InpAllowMinLot      = true;         // Fall back to broker min lot on small accounts
-input double        InpMaxMinLotRiskPct = 100.0;        // Max % risk allowed when using min lot (100 = always enter)
-input int           InpMaxOpenPositions = 2;            // Max EA positions total (avoid correlated churn)
-input int           InpMaxSpreadPoints  = 400;          // Reject entries above this spread (points)
-input int           InpMaxSlippagePoints= 50;           // Execution slippage (points)
-input double        InpDailyLossStopPct = 4.0;          // Halt new entries after this daily drawdown % (0=off)
-
-input group "=== SL / legs ==="
-input double        InpGoldPipSize      = 0.01;         // One XAU pip in price units
-input bool          InpUseSmartSL       = true;         // Smart invalidation: HTF OB/FVG + swing + liquidity sweep
-input double        InpSmartSL_ZoneATR  = 0.60;         // Max distance from current price for a zone to be considered a reaction/retest
-input double        InpSmartSL_BufferATR= 0.20;         // Extra breathing room beyond the invalidation extreme
-input double        InpSmartSL_MinATR   = 0.65;         // Minimum stop distance when Smart SL is used
-input double        InpSmartSL_MaxATR   = 3.50;         // Maximum stop distance before skip/clamp
-input bool          InpSmartSL_UseSweep = true;         // Include recent HTF liquidity sweep as invalidation candidate
-input bool          InpSmartSL_UseFVG   = false;        // Use FVG edge as a secondary invalidation candidate
-input double        InpSL_ATR_Buffer    = 0.25;         // Fallback SL buffer beyond structure extreme (ATR mult)
-input double        InpMinSLPips        = 0.0;          // Minimum structural stop (pips)
-input double        InpMaxSLPips        = 800.0;        // Maximum structural stop (pips)
-input double        InpTP1_RR           = 1.25;         // TP target in R when TP leg is enabled
-input bool          InpUseBrokerSLTP    = true;         // Send real SL/TP to broker
-input bool          InpRetryRunner      = true;          // Retry runner if broker rejects the first request
-input int           InpRunnerRetryMs    = 150;           // Delay between runner retries (ms)
-input bool          InpRequireBothLegs  = true;          // BOTH mode: if either leg fails, close the other leg
-input double        InpBothRiskFraction = 0.50;          // Risk fraction per leg in BOTH mode (0.50 = total risk ~= configured risk)
-input ENUM_TIMEFRAMES InpSL_SwingTF     = PERIOD_M5;    // TF for the structural SL swing (M1 is too noisy/easily swept)
-input bool          InpSkipWideSL       = true;         // Skip the trade if the true structural stop exceeds the cap (don't clamp into noise)
-
-input group "=== Profit protection state machine (R-based) ==="
-input double        InpProtectAtR       = 2.00;         // Do NOT tighten before runner reaches this R
-input double        InpProtectLockR     = 0.25;         // At ProtectAtR, lock only this R (room to breathe)
-input double        InpLockAtR          = 3.00;         // Stronger lock after this R
-input double        InpLockProfitR      = 0.75;         // Lock this much R above/below entry
-input double        InpTrailArmR        = 3.00;         // Structure trail starts here
-input double        InpRunnerArmR       = 4.00;         // Breakout runner mode starts here
-input bool          InpUseStructureTrail= true;         // Trail SL under HH/HL (BUY) or over LH/LL (SELL)
-input double        InpTrailATRBuffer   = 0.90;         // Structure trail buffer (ATR mult)
-input double        InpTrailMinATR      = 0.75;         // Minimum live price-to-SL distance while trailing
-input ENUM_TIMEFRAMES InpTrailTF        = PERIOD_M15;   // Timeframe for structure trail HH/HL (BUY) or LH/LL (SELL)
-input int           InpGiveBackPct      = 0;           // Max % of peak floating profit to give back before closing (0=off)
-input double        InpGiveBackMinUSD   = 999999.0;          // Min peak floating $ before give-back rule applies
-input bool          InpHoldLonger       = true;         // Let winners run: trend-aware give-back + wider trail while aligned TREND/BREAKOUT
-input int           InpGiveBackPctTrend = 0;           // Give-back % allowed while runner is in an aligned TREND/BREAKOUT (looser = hold longer)
-input double        InpTrailBufferTrend = 0.90;
-
-input group "=== Exit engine (spec 16-18) ==="
-input int           InpExitWarnScore    = 999;           // Exit score against runner => tighten SL (WARNING)
-input int           InpExitCloseScore   = 999;           // Exit score against runner => close it (REVERSAL)
-input bool          InpExitOnlyBeforeTrail = true;      // Exit-score close only while stage<3 (trail decides after)
-input bool          InpExitOnHTFReversal= false;         // Close runner on confirmed HTF structure reversal
-
-input group "=== Session / news / logging / safety ==="
-input bool          InpUseSessionFilter = false;        // Only enter inside the session window below (server time)
-input int           InpSessionStartHour = 7;            // Session start hour (server, inclusive)
-input int           InpSessionEndHour   = 20;           // Session end hour (server, exclusive)
-input bool          InpBlockNewsSpike   = true;         // Block new entries on an abnormal M1 volatility / spread spike
-input double        InpNewsSpikeATR     = 3.0;          // Last closed M1 bar range > this*ATR => treat as news spike
-input double        InpNewsSpreadMult   = 2.0;          // Live spread > this*smoothed-average => treat as news spike (0=off)
-input bool          InpLogOnlyMode      = false;        // Score+log every decision but NEVER place orders (backtest data collection)
-input bool          InpSingleManagerLock= true;         // Prevent a 2nd chart (same magic+symbol) from managing the same tickets
 
 //==================================================================
 // ENUMS / STRUCTS
@@ -308,6 +323,7 @@ struct VirtualPos
    double           trailAnchor;  // last swing used for structure trailing
    datetime         lastTrailBar;
    double           peakProfit;   // peak floating profit seen (give-back rule)
+   double           peakExtreme;  // extreme price seen since entry (peak-price trail)
   };
 
 //==================================================================
@@ -373,6 +389,8 @@ int      g_logHandle=INVALID_HANDLE;
 string   g_lastDecision="init";
 datetime g_lastLossBuy=0;    // time of last closed loss in BUY dir (cooldown)
 datetime g_lastLossSell=0;   // time of last closed loss in SELL dir (cooldown)
+datetime g_lastWinBuy=0;     // time of last closed win/manual in BUY dir
+datetime g_lastWinSell=0;    // time of last closed win/manual in SELL dir
 int      g_zoneObjCount=0;
 double   g_spreadEMA=0.0;     // smoothed live spread for the news-spike guard
 bool     g_isManager=true;    // false if another live instance owns the manager lock
@@ -1203,6 +1221,7 @@ void AddVPos(ulong ticket,int dir,bool runner,double entry,double sl,double tp,d
    g_vpos[n].group=group;g_vpos[n].pairTicket=0;g_vpos[n].pairTP1Banked=false;
    g_vpos[n].trailAnchor=0.0;g_vpos[n].lastTrailBar=0;
    g_vpos[n].peakProfit=0.0;
+   g_vpos[n].peakExtreme=entry;
    SaveVPos(n);
   }
 
@@ -1238,11 +1257,17 @@ void SyncVPos()
      {
       if(!PositionSelectByTicket(g_vpos[i].ticket))
         {
-         // record a loss for the same-direction cooldown guard
-         if(ClosedNetProfit(g_vpos[i].ticket)<0.0)
+         // record a loss or win for the same-direction cooldown guard
+         double net = ClosedNetProfit(g_vpos[i].ticket);
+         if(net<0.0)
            {
             if(g_vpos[i].dir>0) g_lastLossBuy=TimeCurrent();
             else g_lastLossSell=TimeCurrent();
+           }
+         else if(net>0.0)
+           {
+            if(g_vpos[i].dir>0) g_lastWinBuy=TimeCurrent();
+            else g_lastWinSell=TimeCurrent();
            }
          // Position closed by broker SL/TP or externally: bank TP1 for its runner pair
          if(!g_vpos[i].isRunner && g_vpos[i].group>0)
@@ -1302,7 +1327,12 @@ double PlanLotForRisk(double distance,double riskFraction,double &why_ok)
    double minLot=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
    if(raw<minLot)
      {
-      if(InpAllowMinLot && TickLossPerLot(distance)*minLot<=AccountInfoDouble(ACCOUNT_EQUITY)*(InpMaxMinLotRiskPct/100.0)) raw=minLot;
+      if(InpAllowMinLot)
+        {
+         if(InpMinLotGuard == GUARD_NONE) raw=minLot;
+         else if(TickLossPerLot(distance)*minLot<=AccountInfoDouble(ACCOUNT_EQUITY)*(InpMaxMinLotRiskPct/100.0)) raw=minLot;
+         else { why_ok=0.0; return 0.0; }
+        }
       else { why_ok=0.0; return 0.0; }
      }
    return NormalizeLot(raw);
@@ -1611,6 +1641,7 @@ double StructuralSL(int dir)
      }
 
    double minGap=atr*(InpUseSmartSL?MathMax(0.10,InpSmartSL_MinATR):0.80);
+   if(InpMinSLPips>0) minGap=MathMax(minGap,InpMinSLPips*InpGoldPipSize);
    gap=MathMax(gap,minGap);
 
    double maxGap=atr*(InpUseSmartSL?MathMax(0.50,InpSmartSL_MaxATR):2.80);
@@ -1766,20 +1797,43 @@ void ManageRunner(int i)
    double move=(dir>0?px-g_vpos[i].entryPrice:g_vpos[i].entryPrice-px);
    double currentR=move/R;
    if(floatUSD>g_vpos[i].peakProfit) g_vpos[i].peakProfit=floatUSD;
+   if(dir>0){ if(px>g_vpos[i].peakExtreme) g_vpos[i].peakExtreme=px; }
+   else     { if(px<g_vpos[i].peakExtreme) g_vpos[i].peakExtreme=px; }
 
    // RUNNER RULE: do not touch the initial structural SL while the trade is
    // still in normal noise. No BE, no warning-tighten, no micro-lock.
-   // Protection starts only after a meaningful R move.
-   if(g_vpos[i].stage<1 && currentR>=InpProtectAtR)
+   // Protection starts only after a meaningful move.
+   if(g_vpos[i].stage<1)
      {
-      double lockR=MathMax(0.0,InpProtectLockR);
-      double target=(dir>0?g_vpos[i].entryPrice+R*lockR
-                          :g_vpos[i].entryPrice-R*lockR);
-      MoveSL(i,target,"R_PROTECT_2.0R");
-      g_vpos[i].stage=1;
+      bool triggered = false;
+      double lockDist = 0;
+      if(InpUseFixedPointsProtect)
+        {
+         if(move >= InpProtectAtPoints)
+           {
+            triggered = true;
+            lockDist = InpProtectLockPoints;
+           }
+        }
+      else
+        {
+         if(currentR >= InpProtectAtR)
+           {
+            triggered = true;
+            lockDist = R * MathMax(0.0,InpProtectLockR);
+           }
+        }
+
+      if(triggered)
+        {
+         double target=(dir>0?g_vpos[i].entryPrice+lockDist
+                             :g_vpos[i].entryPrice-lockDist);
+         MoveSL(i,target,"PROTECT_STAGE_1");
+         g_vpos[i].stage=1;
+        }
      }
 
-   if(g_vpos[i].stage<2 && currentR>=InpLockAtR)
+   if(!InpUseFixedPointsProtect && g_vpos[i].stage<2 && currentR>=InpLockAtR)
      {
       double target=(dir>0?g_vpos[i].entryPrice+R*InpLockProfitR
                           :g_vpos[i].entryPrice-R*InpLockProfitR);
@@ -1787,8 +1841,14 @@ void ManageRunner(int i)
       g_vpos[i].stage=2;
      }
 
-   if(g_vpos[i].stage<3 && currentR>=InpTrailArmR)
-      g_vpos[i].stage=3;
+   if(g_vpos[i].stage<3)
+     {
+      bool armTrail = false;
+      if(InpUseFixedPointsProtect) armTrail = (move >= InpProtectAtPoints * 1.5);
+      else armTrail = (currentR >= InpTrailArmR);
+      
+      if(armTrail) g_vpos[i].stage=3;
+     }
 
    bool alignedTrend=(g_snap.regimeDir==dir &&
                       (g_snap.regime==REGIME_TREND||g_snap.regime==REGIME_BREAKOUT));
@@ -1796,6 +1856,24 @@ void ManageRunner(int i)
      {
       g_vpos[i].stage=4;
       if(InpVerboseLog) PrintFormat("[BV3] #%I64u entered BREAKOUT_RUNNER mode at %.2fR",g_vpos[i].ticket,currentR);
+     }
+
+   if(InpPeakTrailOn && g_vpos[i].stage >= 2)
+     {
+      double atr=ATR(InpTFTrigger,1); if(atr<=0) atr=g_snap.atrRegime;
+      if(atr>0)
+        {
+         if(dir>0)
+           {
+            double cand = g_vpos[i].peakExtreme - atr * InpPeakTrailATR;
+            if(cand > g_vpos[i].virtualSL) MoveSL(i, cand, "PEAK_TRAIL");
+           }
+         else
+           {
+            double cand = g_vpos[i].peakExtreme + atr * InpPeakTrailATR;
+            if(cand < g_vpos[i].virtualSL || g_vpos[i].virtualSL == 0.0) MoveSL(i, cand, "PEAK_TRAIL");
+           }
+        }
      }
 
    // R15: NO floating-profit giveback close. A runner is allowed to breathe
@@ -1881,8 +1959,29 @@ void SyncBrokerSLTP()
       ulong t=g_vpos[i].ticket;
       if(!PositionSelectByTicket(t)) continue;
       double bsl=PositionGetDouble(POSITION_SL);
+      int dir=g_vpos[i].dir;
       if(MathAbs(bsl-g_vpos[i].virtualSL)>g_point)
-        { trade.SetExpertMagicNumber(InpMagic); trade.PositionModify(t,g_vpos[i].virtualSL,g_vpos[i].virtualTP); }
+        {
+         // MANUAL SL GUARD: If the broker SL is tighter/better than virtual SL (user moved it),
+         // adopt it as the new virtualSL instead of fighting the user.
+         bool isManualBetter = false;
+         if(bsl > 0.0)
+           {
+            if(dir > 0 && bsl > g_vpos[i].virtualSL) isManualBetter = true;
+            if(dir < 0 && (bsl < g_vpos[i].virtualSL || g_vpos[i].virtualSL <= 0.0)) isManualBetter = true;
+           }
+           
+         if(isManualBetter)
+           {
+            g_vpos[i].virtualSL = bsl;
+            SaveVPos(i);
+            if(InpVerboseLog) PrintFormat("[BV3] Adopted manual SL for #%I64u at %.2f", t, bsl);
+           }
+         else
+           {
+            trade.SetExpertMagicNumber(InpMagic); trade.PositionModify(t,g_vpos[i].virtualSL,g_vpos[i].virtualTP); 
+           }
+        }
      }
   }
 
@@ -1999,6 +2098,14 @@ void TryEntry()
          why=StringFormat("cooldown %dm after loss",InpLossCooldownMin);
      }
 
+   // Win cooldown: do not re-enter the same direction right after a win
+   if(why==""&&InpWinCooldownMin>0)
+     {
+      datetime last=(dir>0?g_lastWinBuy:g_lastWinSell);
+      if(last>0&&(TimeCurrent()-last)<InpWinCooldownMin*60)
+         why=StringFormat("cooldown %dm after win",InpWinCooldownMin);
+     }
+
    if(why!=""){ LogDecision(dir,0,"BLOCKED:"+why); return; }
 
    double sl=StructuralSL(dir);
@@ -2039,23 +2146,70 @@ void LogDecision(int dir,int fired,string note)
 //==================================================================
 // DASHBOARD
 //==================================================================
+double CurrencyMultiplier()
+  {
+   string curr = AccountInfoString(ACCOUNT_CURRENCY);
+   StringToUpper(curr);
+   if(StringFind(curr, "USC") >= 0 || StringFind(curr, "CENT") >= 0) return 0.01;
+   return 1.0;
+  }
+
+double BotPnL(datetime fromTime)
+  {
+   double pnl = BasketFloating();
+   if(HistorySelect(fromTime, TimeCurrent()))
+     {
+      int deals = HistoryDealsTotal();
+      for(int i=0; i<deals; i++)
+        {
+         ulong deal = HistoryDealGetTicket(i);
+         if(deal > 0)
+           {
+            if(HistoryDealGetString(deal, DEAL_SYMBOL) == _Symbol && HistoryDealGetInteger(deal, DEAL_MAGIC) == InpMagic)
+              {
+               pnl += HistoryDealGetDouble(deal, DEAL_PROFIT) + HistoryDealGetDouble(deal, DEAL_SWAP) + HistoryDealGetDouble(deal, DEAL_COMMISSION);
+              }
+           }
+        }
+     }
+   return pnl;
+  }
+
 void SetRow(int row,string label,string value,color clr)
   {
    string n1=g_prefix+"DB_L"+IntegerToString(row);
    string n2=g_prefix+"DB_V"+IntegerToString(row);
-   if(ObjectFind(0,n1)<0){ ObjectCreate(0,n1,OBJ_LABEL,0,0,0); ObjectSetInteger(0,n1,OBJPROP_CORNER,CORNER_LEFT_UPPER);
-      ObjectSetInteger(0,n1,OBJPROP_XDISTANCE,12);ObjectSetInteger(0,n1,OBJPROP_YDISTANCE,24+row*18);
-      ObjectSetInteger(0,n1,OBJPROP_FONTSIZE,9);ObjectSetString(0,n1,OBJPROP_FONT,"Consolas"); }
-   if(ObjectFind(0,n2)<0){ ObjectCreate(0,n2,OBJ_LABEL,0,0,0); ObjectSetInteger(0,n2,OBJPROP_CORNER,CORNER_LEFT_UPPER);
-      ObjectSetInteger(0,n2,OBJPROP_XDISTANCE,190);ObjectSetInteger(0,n2,OBJPROP_YDISTANCE,24+row*18);
-      ObjectSetInteger(0,n2,OBJPROP_FONTSIZE,9);ObjectSetString(0,n2,OBJPROP_FONT,"Consolas"); }
-   ObjectSetString(0,n1,OBJPROP_TEXT,label);ObjectSetInteger(0,n1,OBJPROP_COLOR,clrSilver);
+   if(ObjectFind(0,n1)<0){ ObjectCreate(0,n1,OBJ_LABEL,0,0,0); ObjectSetInteger(0,n1,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+      ObjectSetInteger(0,n1,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
+      ObjectSetInteger(0,n1,OBJPROP_XDISTANCE,240);ObjectSetInteger(0,n1,OBJPROP_YDISTANCE,24+row*18);
+      ObjectSetInteger(0,n1,OBJPROP_FONTSIZE,9);ObjectSetString(0,n1,OBJPROP_FONT,"Consolas"); ObjectSetInteger(0,n1,OBJPROP_ZORDER,10); }
+   if(ObjectFind(0,n2)<0){ ObjectCreate(0,n2,OBJ_LABEL,0,0,0); ObjectSetInteger(0,n2,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+      ObjectSetInteger(0,n2,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
+      ObjectSetInteger(0,n2,OBJPROP_XDISTANCE,130);ObjectSetInteger(0,n2,OBJPROP_YDISTANCE,24+row*18);
+      ObjectSetInteger(0,n2,OBJPROP_FONTSIZE,9);ObjectSetString(0,n2,OBJPROP_FONT,"Consolas"); ObjectSetInteger(0,n2,OBJPROP_ZORDER,10); }
+   ObjectSetString(0,n1,OBJPROP_TEXT,label);ObjectSetInteger(0,n1,OBJPROP_COLOR,clrWhite);
    ObjectSetString(0,n2,OBJPROP_TEXT,value);ObjectSetInteger(0,n2,OBJPROP_COLOR,clr);
   }
 
 void Dashboard()
   {
    if(!InpShowDashboard) return;
+   
+   string bgName=g_prefix+"DB_BG";
+   if(ObjectFind(0,bgName)<0)
+     {
+      ObjectCreate(0,bgName,OBJ_RECTANGLE_LABEL,0,0,0);
+      ObjectSetInteger(0,bgName,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+      ObjectSetInteger(0,bgName,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
+      ObjectSetInteger(0,bgName,OBJPROP_BGCOLOR,clrBlack);
+      ObjectSetInteger(0,bgName,OBJPROP_COLOR,clrBlack); 
+      ObjectSetInteger(0,bgName,OBJPROP_BACK,false); 
+      ObjectSetInteger(0,bgName,OBJPROP_ZORDER,0); 
+     }
+   ObjectSetInteger(0,bgName,OBJPROP_XDISTANCE,250);
+   ObjectSetInteger(0,bgName,OBJPROP_YDISTANCE,15);
+   ObjectSetInteger(0,bgName,OBJPROP_XSIZE,240); 
+
    int r=0;
    SetRow(r++,"BOT v3 r14","XAUUSD adaptive",clrGold);
    SetRow(r++,"Regime",RegimeStr(g_snap.regime)+" "+BiasStr(g_snap.regimeDir),
@@ -2063,16 +2217,28 @@ void Dashboard()
    SetRow(r++,"ADX",DoubleToString(g_snap.adx,1),clrWhite);
    SetRow(r++,"H4 / H1",BiasStr(g_snap.htfBiasMajor)+" / "+BiasStr(g_snap.htfBias),clrWhite);
    SetRow(r++,"M30 struct",BiasStr(g_snap.structBias),clrWhite);
-   SetRow(r++,"BUY score",IntegerToString(g_snap.buyScore),g_snap.buyScore>=InpScoreEntry?clrLime:clrSilver);
-   SetRow(r++,"SELL score",IntegerToString(g_snap.sellScore),g_snap.sellScore>=InpScoreEntry?clrTomato:clrSilver);
-   SetRow(r++,"Entry thr",IntegerToString(InpScoreEntry),clrSilver);
-   SetRow(r++,"Events",IntegerToString(ArraySize(g_events))+"  Zones "+IntegerToString(ArraySize(g_zones)),clrSilver);
-   SetRow(r++,"Positions",IntegerToString(CountEA())+"  float $"+DoubleToString(BasketFloating(),2),clrWhite);
-   SetRow(r++,"Spread",DoubleToString(g_snap.spreadPoints,0),SpreadOK()?clrSilver:clrTomato);
+   SetRow(r++,"BUY score",IntegerToString(g_snap.buyScore),g_snap.buyScore>=InpScoreEntry?clrLime:clrWhite);
+   SetRow(r++,"SELL score",IntegerToString(g_snap.sellScore),g_snap.sellScore>=InpScoreEntry?clrTomato:clrWhite);
+   SetRow(r++,"Entry thr",IntegerToString(InpScoreEntry),clrWhite);
+   SetRow(r++,"Events",IntegerToString(ArraySize(g_events))+"  Zones "+IntegerToString(ArraySize(g_zones)),clrWhite);
+   SetRow(r++,"Positions",IntegerToString(CountEA()),clrWhite);
+   SetRow(r++,"Spread",DoubleToString(g_snap.spreadPoints,0),SpreadOK()?clrWhite:clrTomato);
    string runnerState="-";
    for(int i=0;i<ArraySize(g_vpos);i++) if(g_vpos[i].isRunner){ runnerState=StringFormat("st%d %s",g_vpos[i].stage,g_vpos[i].dir>0?"BUY":"SELL"); break; }
    SetRow(r++,"Runner",runnerState,clrAqua);
-   SetRow(r++,"Last",g_lastDecision,clrGray);
+   
+   double mult = CurrencyMultiplier();
+   double dailyPnL = BotPnL(g_dayStart) * mult;
+   
+   MqlDateTime dt; TimeToStruct(TimeCurrent(), dt);
+   dt.day = 1; dt.hour = 0; dt.min = 0; dt.sec = 0;
+   double monthlyPnL = BotPnL(StructToTime(dt)) * mult;
+   
+   SetRow(r++,"Daily PnL", "$"+DoubleToString(dailyPnL,2), dailyPnL>=0?clrLime:clrTomato);
+   SetRow(r++,"Monthly PnL", "$"+DoubleToString(monthlyPnL,2), monthlyPnL>=0?clrLime:clrTomato);
+   
+   ObjectSetInteger(0,bgName,OBJPROP_YSIZE,r*18 + 15);
+   
    ChartRedraw();
   }
 
